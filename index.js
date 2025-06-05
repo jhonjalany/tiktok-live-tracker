@@ -1,5 +1,5 @@
 const express = require('express');
-const { WebcastPushConnection } = require('./dist/index'); // or 'tiktok-live-connector'
+const { WebcastPushConnection } = require('./dist/index'); // or 'tiktok-live-connector' if installed as package
 const axios = require('axios');
 
 // Set up Express App
@@ -22,7 +22,7 @@ app.listen(PORT, '0.0.0.0', () => {
 
 // ====== YOUR TIKTOK LOGIC BELOW ======
 const tiktokUsername = 'respawnandride'; // Replace with your TikTok username
-const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker';  // Replace with your webhook URL
+const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker';  // Replace with your actual webhook URL
 
 const tiktokLive = new WebcastPushConnection(tiktokUsername);
 
