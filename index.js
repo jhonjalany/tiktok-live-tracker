@@ -47,33 +47,48 @@ setInterval(async () => {
     viewerStats = {};
 }, 5000);
 
-// Function to connect with automatic retry
-function connectWithRetry() {
-    tiktokLive.connect().then(() => {
-        console.log('Connected to TikTok live room!');
-    }).catch(err => {
-        console.error('Connection failed or stream ended:', err);
-        console.log('Retrying connection in 10 seconds...');
-        setTimeout(() => {
-            connectWithRetry();
-        }, 10000); // Retry every 10 seconds
-    });
+// Reconnection logic
+let reconnectAttempts = 0;
+const maxReconnectAttempts = 10;
+
+async function attemptReconnect() {
+    if (reconnectAttempts >= maxReconnectAttempts) {
+        console.log("Max reconnection attempts reached. Stopping.");
+        return;
+    }
+
+    reconnectAttempts++;
+    console.log(`Reconnection attempt #${reconnectAttempts}...`);
+
+    try {
+        await tiktokLive.connect();
+        console.log("Successfully reconnected to TikTok live room!");
+        reconnectAttempts = 0; // Reset on success
+    } catch (err) {
+        console.error("Reconnection failed:", err.message);
+        setTimeout(attemptReconnect, 10000); // Try again in 10 seconds
+    }
 }
 
-// Start initial connection
-connectWithRetry();
+// Initial connection
+tiktokLive.connect()
+    .then(() => {
+        console.log('Connected to TikTok live room!');
+    })
+    .catch(() => {
+        console.log("User is not live yet or connection failed. Starting reconnection attempts...");
+        attemptReconnect();
+    });
 
-// Handle disconnection (if host ends live)
+// Listen for disconnection events
 tiktokLive.on('disconnected', () => {
-    console.log('Disconnected from live stream. Reconnecting...');
-    connectWithRetry();
+    console.log('Disconnected from TikTok live room. Attempting to reconnect...');
+    attemptReconnect();
 });
 
-// Handle errors that may indicate loss of stream
-tiktokLive.on('error', (err) => {
-    console.error('Socket error:', err.message);
-    console.log('Attempting to reconnect...');
-    connectWithRetry();
+tiktokLive.on('roomClose', () => {
+    console.log('TikTok live room was closed. Attempting to reconnect...');
+    attemptReconnect();
 });
 
 // Handle like events
