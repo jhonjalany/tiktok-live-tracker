@@ -5,7 +5,7 @@ const express = require('express');
 const app = express();
 
 // Configuration
-const tiktokUsername = 'respawnandride'; // Replace with your TikTok username
+const tiktokUsername = 'dandbcreative'; // Replace with your TikTok username
 const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker'; 
 
 const tiktokLive = new WebcastPushConnection(tiktokUsername);
