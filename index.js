@@ -1,8 +1,12 @@
-const { WebcastPushConnection } = require('./dist/index');
-const axios = require('axios'); // Make sure axios is installed: npm install axios
+const { WebcastPushConnection } = require('./index'); // Adjust this path if needed
+const axios = require('axios');
+const express = require('express');
 
-const tiktokUsername = 'respawnandride'; // Replace with your TikTok username (without @)
-const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker'; // Replace with your actual n8n webhook URL
+const app = express();
+
+// Configuration
+const tiktokUsername = 'respawnandride'; // Replace with your TikTok username
+const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'https://n8n-app-gn6h.onrender.com/webhook/livetracker'; 
 
 const tiktokLive = new WebcastPushConnection(tiktokUsername);
 
@@ -10,7 +14,7 @@ const tiktokLive = new WebcastPushConnection(tiktokUsername);
 let viewerStats = {};
 
 // Utility to construct TikTok profile URL
-const getProfileLink = (uniqueId) => `https://www.tiktok.com/@${uniqueId}`;
+const getProfileLink = (uniqueId) => `https://www.tiktok.com/@${uniqueId}`; 
 
 // Interval to print + clear every 5 seconds
 setInterval(async () => {
@@ -88,14 +92,13 @@ tiktokLive.on('gift', (data) => {
     const giftCoins = data.diamondCount * (data.repeatCount || 1);
     viewerStats[userId].coins += giftCoins;
 });
-const express = require('express');
-const app = express();
-const PORT = process.env.PORT || 3000;
 
+// Express server to satisfy Render's requirement
+const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => {
     res.send('TikTok Live Tracker Running...');
 });
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is listening on port ${PORT}`);
 });
