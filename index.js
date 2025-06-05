@@ -1,28 +1,8 @@
-const express = require('express');
-const { WebcastPushConnection } = require('./dist/index'); // or 'tiktok-live-connector'
-const axios = require('axios');
+const { WebcastPushConnection } = require('./dist/index');
+const axios = require('axios'); // Make sure axios is installed: npm install axios
 
-// Set up Express App
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Health check route
-app.get('/', (req, res) => {
-  res.send('TikTok Live Tracker is running!');
-});
-
-app.get('/health', (req, res) => {
-  res.status(200).send('OK');
-});
-
-// Start HTTP server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server listening on port ${PORT}`);
-});
-
-// ====== YOUR TIKTOK LOGIC BELOW ======
-const tiktokUsername = 'respawnandride'; // Replace with your TikTok username
-const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker';  // Your webhook URL
+const tiktokUsername = 'respawnandride'; // Replace with your TikTok username (without @)
+const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker'; // Replace with your actual n8n webhook URL
 
 const tiktokLive = new WebcastPushConnection(tiktokUsername);
 
@@ -30,84 +10,92 @@ const tiktokLive = new WebcastPushConnection(tiktokUsername);
 let viewerStats = {};
 
 // Utility to construct TikTok profile URL
-const getProfileLink = (uniqueId) => `https://www.tiktok.com/@${uniqueId}`; 
+const getProfileLink = (uniqueId) => `https://www.tiktok.com/@${uniqueId}`;
 
-// Interval to send data every 5 seconds
+// Interval to print + clear every 5 seconds
 setInterval(async () => {
-  const output = {};
+    console.clear();
 
-  for (const [userId, data] of Object.entries(viewerStats)) {
-    output[userId] = {
-      userID: userId,
-      username: data.username,
-      profileLink: data.profileLink,
-      profilePictureUrl: data.profilePictureUrl,
-      totalLikesCountInPast5Seconds: data.likes,
-      totalCoinOrGiftCountInPast5Seconds: data.coins
-    };
-  }
+    const output = {};
 
-  if (Object.keys(output).length === 0) {
-    console.log('No data to send.');
-    return;
-  }
+    for (const [userId, data] of Object.entries(viewerStats)) {
+        output[userId] = {
+            userID: userId,
+            username: data.username,
+            profileLink: data.profileLink,
+            profilePictureUrl: data.profilePictureUrl,
+            totalLikesCountInPast5Seconds: data.likes,
+            totalCoinOrGiftCountInPast5Seconds: data.coins
+        };
+    }
 
-  console.log('Sending data to n8n:', JSON.stringify(output, null, 2));
+    console.log(JSON.stringify(output, null, 2));
 
-  try {
-    const response = await axios.post(n8nWebhookUrl, output);
-    console.log('Data successfully sent to n8n webhook:', response.status);
+    // Send to n8n webhook
+    try {
+        const response = await axios.post(n8nWebhookUrl, output);
+        console.log('Data sent to n8n webhook:', response.status);
+    } catch (error) {
+        console.error('Failed to send data to n8n webhook:', error.message);
+    }
 
-    // Only clear stats after successful POST
+    // Clear all user data after output
     viewerStats = {};
-  } catch (error) {
-    console.error('Failed to send data to n8n webhook:', error.message);
-    // Do NOT clear viewerStats if failed, will retry next interval
-  }
 }, 5000);
 
 // Connect to the live stream
 tiktokLive.connect().then(() => {
-  console.log('Connected to TikTok live room!');
+    console.log('Connected to TikTok live room!');
 }).catch(err => {
-  console.error('Connection failed:', err);
+    console.error('Connection failed:', err);
 });
 
 // Handle like events
 tiktokLive.on('like', (data) => {
-  const userId = data.userId.toString();
-  const uniqueId = data.uniqueId;
+    const userId = data.userId.toString();
+    const uniqueId = data.uniqueId;
 
-  if (!viewerStats[userId]) {
-    viewerStats[userId] = {
-      userID: userId,
-      username: uniqueId,
-      profileLink: getProfileLink(uniqueId),
-      profilePictureUrl: data.profilePictureUrl || '',
-      likes: 0,
-      coins: 0
-    };
-  }
+    if (!viewerStats[userId]) {
+        viewerStats[userId] = {
+            userID: userId,
+            username: uniqueId,
+            profileLink: getProfileLink(uniqueId),
+            profilePictureUrl: data.profilePictureUrl || '',
+            likes: 0,
+            coins: 0
+        };
+    }
 
-  viewerStats[userId].likes += data.likeCount;
+    viewerStats[userId].likes += data.likeCount;
 });
 
 // Handle gift events
 tiktokLive.on('gift', (data) => {
-  const userId = data.userId.toString();
-  const uniqueId = data.uniqueId;
+    const userId = data.userId.toString();
+    const uniqueId = data.uniqueId;
 
-  if (!viewerStats[userId]) {
-    viewerStats[userId] = {
-      userID: userId,
-      username: uniqueId,
-      profileLink: getProfileLink(uniqueId),
-      profilePictureUrl: data.profilePictureUrl || '',
-      likes: 0,
-      coins: 0
-    };
-  }
+    if (!viewerStats[userId]) {
+        viewerStats[userId] = {
+            userID: userId,
+            username: uniqueId,
+            profileLink: getProfileLink(uniqueId),
+            profilePictureUrl: data.profilePictureUrl || '',
+            likes: 0,
+            coins: 0
+        };
+    }
 
-  const giftCoins = data.diamondCount * (data.repeatCount || 1);
-  viewerStats[userId].coins += giftCoins;
+    const giftCoins = data.diamondCount * (data.repeatCount || 1);
+    viewerStats[userId].coins += giftCoins;
+});
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('TikTok Live Tracker Running...');
+});
+
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 });
