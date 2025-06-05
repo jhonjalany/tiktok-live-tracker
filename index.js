@@ -1,4 +1,4 @@
-const { WebcastPushConnection } = require('./index'); // Adjust this path if needed
+const { WebcastPushConnection } = require('.dist/index'); // Adjust this path if needed
 const axios = require('axios');
 const express = require('express');
 
