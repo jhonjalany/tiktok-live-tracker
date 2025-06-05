@@ -1,5 +1,5 @@
 const express = require('express');
-const { WebcastPushConnection } = require('./dist/index'); // or 'tiktok-live-connector' if installed as package
+const { WebcastPushConnection } = require('./dist/index'); // or 'tiktok-live-connector'
 const axios = require('axios');
 
 // Set up Express App
@@ -22,7 +22,7 @@ app.listen(PORT, '0.0.0.0', () => {
 
 // ====== YOUR TIKTOK LOGIC BELOW ======
 const tiktokUsername = 'respawnandride'; // Replace with your TikTok username
-const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker';  // Replace with your actual webhook URL
+const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker';     // Replace with your actual webhook URL
 
 const tiktokLive = new WebcastPushConnection(tiktokUsername);
 
@@ -31,6 +31,35 @@ let viewerStats = {};
 
 // Utility to construct TikTok profile URL
 const getProfileLink = (uniqueId) => `https://www.tiktok.com/@${uniqueId}`; 
+
+// Function to send data with retries
+async function sendDataToN8n(dataToSend) {
+  const maxRetries = 3;
+  let attempt = 0;
+
+  while (attempt < maxRetries) {
+    try {
+      const response = await axios.post(n8nWebhookUrl, dataToSend, {
+        timeout: 10000, // 10 seconds timeout
+      });
+
+      if (response.status >= 200 && response.status < 300) {
+        console.log('Successfully sent data to n8n:', response.status);
+        return true;
+      }
+    } catch (error) {
+      console.error(`Attempt ${attempt + 1} failed to send data to n8n:`, error.message);
+      attempt++;
+      if (attempt < maxRetries) {
+        console.log(`Retrying in 3 seconds...`);
+        await new Promise(res => setTimeout(res, 3000));
+      }
+    }
+  }
+
+  console.error('Failed to send data to n8n after multiple attempts.');
+  return false;
+}
 
 // Interval to print + clear every 5 seconds
 setInterval(async () => {
@@ -47,15 +76,17 @@ setInterval(async () => {
     };
   }
 
-  console.log(JSON.stringify(output, null, 2));
-
-  try {
-    const response = await axios.post(n8nWebhookUrl, output);
-    console.log('Data sent to n8n webhook:', response.status);
-  } catch (error) {
-    console.error('Failed to send data to n8n webhook:', error.message);
+  // Don't send if there's no data
+  if (Object.keys(output).length === 0) {
+    console.log("No data to send this interval.");
+    return;
   }
 
+  console.log("Sending data:", JSON.stringify(output, null, 2));
+
+  await sendDataToN8n(output);
+
+  // Clear stats only after successful send
   viewerStats = {};
 }, 5000);
 
