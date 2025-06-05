@@ -6,7 +6,7 @@ const app = express();
 
 // Configuration
 const tiktokUsername = 'respawnandride'; // Replace with your TikTok username
-const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || 'https://n8n-app-gn6h.onrender.com/webhook/livetracker'; 
+const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker'; 
 
 const tiktokLive = new WebcastPushConnection(tiktokUsername);
 
