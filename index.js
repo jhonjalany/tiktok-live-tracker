@@ -66,7 +66,7 @@ async function attemptReconnect() {
         reconnectAttempts = 0; // Reset on success
     } catch (err) {
         console.error("Reconnection failed:", err.message);
-        setTimeout(attemptReconnect, 300000); // Try again in 5 minutes
+        setTimeout(attemptReconnect, 60000); // Try again in 5 minutes
     }
 }
 
