@@ -1,4 +1,4 @@
-const { WebcastPushConnection } = require('tiktok-webcast-push-connection');
+const { WebcastPushConnection } = require('./dist/index'); // Adjust this path if needed
 const axios = require('axios');
 const express = require('express');
 
@@ -8,7 +8,7 @@ const app = express();
 const tiktokUsername = 'jhonjalany'; // Replace with your TikTok username
 const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker'; 
 
-let tiktokLive = new WebcastPushConnection(tiktokUsername);
+const tiktokLive = new WebcastPushConnection(tiktokUsername);
 
 // In-memory storage for recent interactions
 let viewerStats = {};
@@ -47,136 +47,88 @@ setInterval(async () => {
     viewerStats = {};
 }, 5000);
 
-// ----------------------
-// Live Status Polling Logic
-// ----------------------
-
-let currentRoomId = null;
+// Reconnection logic
 let reconnectAttempts = 0;
-const maxReconnectAttempts = 10;
+const maxReconnectAttempts = 10000;
 
-async function checkIfUserIsLive(username) {
+async function attemptReconnect() {
+    if (reconnectAttempts >= maxReconnectAttempts) {
+        console.log("Max reconnection attempts reached. Stopping.");
+        return;
+    }
+
+    reconnectAttempts++;
+    console.log(`Reconnection attempt #${reconnectAttempts}...`);
+
     try {
-        const response = await axios.get(`https://www.tiktok.com/@${username}`); 
-        const match = response.data.match(/roomId%22%3A%22(\d+)%22/);
-        return match ? match[1] : null;
+        await tiktokLive.connect();
+        console.log("Successfully reconnected to TikTok live room!");
+        reconnectAttempts = 0; // Reset on success
     } catch (err) {
-        console.error("Error fetching live status:", err.message);
-        return null;
+        console.error("Reconnection failed:", err.message);
+        setTimeout(attemptReconnect, 300000); // Try again in 5 minutes
     }
 }
 
-async function pollForLiveStatus() {
-    const roomId = await checkIfUserIsLive(tiktokUsername);
-
-    if (roomId && roomId !== currentRoomId) {
-        console.log(`Detected new live room: ${roomId}`);
-        currentRoomId = roomId;
-
-        try {
-            if (tiktokLive['_liveClient']?.connected) {
-                tiktokLive.disconnect(); // Disconnect old connection
-            }
-
-            tiktokLive = new WebcastPushConnection(tiktokUsername); // Fresh instance
-            setupEventListeners(); // Rebind event listeners
-
-            await tiktokLive.connect();
-            console.log("Successfully connected to new live room!");
-            reconnectAttempts = 0;
-        } catch (err) {
-            console.error("Failed to connect to new live room:", err.message);
-        }
-    } else if (!roomId) {
-        console.log("User is not live yet.");
-    }
-}
-
-// Run every 30 seconds
-setInterval(pollForLiveStatus, 30000); // Every 30 seconds
-
-// ----------------------
-// Event Listeners Setup
-// ----------------------
-
-function setupEventListeners() {
-
-    function attemptReconnect() {
-        if (reconnectAttempts >= maxReconnectAttempts) {
-            console.log("Max reconnection attempts reached. Stopping.");
-            return;
-        }
-
-        reconnectAttempts++;
-        console.log(`Reconnection attempt #${reconnectAttempts}...`);
-
-        setTimeout(async () => {
-            try {
-                await tiktokLive.connect();
-                console.log("Successfully reconnected to TikTok live room!");
-                reconnectAttempts = 0;
-            } catch (err) {
-                console.error("Reconnection failed:", err.message);
-                attemptReconnect();
-            }
-        }, 30000); // Try again in 30 seconds
-    }
-
-    // Listen for disconnection events
-    tiktokLive.on('disconnected', () => {
-        console.log('Disconnected from TikTok live room. Attempting to reconnect...');
+// Initial connection
+tiktokLive.connect()
+    .then(() => {
+        console.log('Connected to TikTok live room!');
+    })
+    .catch(() => {
+        console.log("User is not live yet or connection failed. Starting reconnection attempts...");
         attemptReconnect();
     });
 
-    tiktokLive.on('roomClose', () => {
-        console.log('TikTok live room was closed. Resetting live status...');
-        currentRoomId = null; // Reset so polling can detect new live
-        attemptReconnect();
-    });
+// Listen for disconnection events
+tiktokLive.on('disconnected', () => {
+    console.log('Disconnected from TikTok live room. Attempting to reconnect...');
+    attemptReconnect();
+});
 
-    // Handle like events
-    tiktokLive.on('like', (data) => {
-        const userId = data.userId.toString();
-        const uniqueId = data.uniqueId;
+tiktokLive.on('roomClose', () => {
+    console.log('TikTok live room was closed. Attempting to reconnect...');
+    attemptReconnect();
+});
 
-        if (!viewerStats[userId]) {
-            viewerStats[userId] = {
-                userID: userId,
-                username: uniqueId,
-                profileLink: getProfileLink(uniqueId),
-                profilePictureUrl: data.profilePictureUrl || '',
-                likes: 0,
-                coins: 0
-            };
-        }
+// Handle like events
+tiktokLive.on('like', (data) => {
+    const userId = data.userId.toString();
+    const uniqueId = data.uniqueId;
 
-        viewerStats[userId].likes += data.likeCount;
-    });
+    if (!viewerStats[userId]) {
+        viewerStats[userId] = {
+            userID: userId,
+            username: uniqueId,
+            profileLink: getProfileLink(uniqueId),
+            profilePictureUrl: data.profilePictureUrl || '',
+            likes: 0,
+            coins: 0
+        };
+    }
 
-    // Handle gift events
-    tiktokLive.on('gift', (data) => {
-        const userId = data.userId.toString();
-        const uniqueId = data.uniqueId;
+    viewerStats[userId].likes += data.likeCount;
+});
 
-        if (!viewerStats[userId]) {
-            viewerStats[userId] = {
-                userID: userId,
-                username: uniqueId,
-                profileLink: getProfileLink(uniqueId),
-                profilePictureUrl: data.profilePictureUrl || '',
-                likes: 0,
-                coins: 0
-            };
-        }
+// Handle gift events
+tiktokLive.on('gift', (data) => {
+    const userId = data.userId.toString();
+    const uniqueId = data.uniqueId;
 
-        const giftCoins = data.diamondCount * (data.repeatCount || 1);
-        viewerStats[userId].coins += giftCoins;
-    });
-}
+    if (!viewerStats[userId]) {
+        viewerStats[userId] = {
+            userID: userId,
+            username: uniqueId,
+            profileLink: getProfileLink(uniqueId),
+            profilePictureUrl: data.profilePictureUrl || '',
+            likes: 0,
+            coins: 0
+        };
+    }
 
-// Start polling on startup
-console.log("Starting live status poll...");
-pollForLiveStatus();
+    const giftCoins = data.diamondCount * (data.repeatCount || 1);
+    viewerStats[userId].coins += giftCoins;
+});
 
 // Express server to satisfy Render's requirement
 const PORT = process.env.PORT || 10000;
