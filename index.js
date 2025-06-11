@@ -49,7 +49,7 @@ setInterval(async () => {
 
 // Reconnection logic
 let reconnectAttempts = 0;
-const maxReconnectAttempts = 2;
+const maxReconnectAttempts = 10;
 
 async function attemptReconnect() {
     if (reconnectAttempts >= maxReconnectAttempts) {
