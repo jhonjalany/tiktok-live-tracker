@@ -1,11 +1,10 @@
-const { WebcastPushConnection } = require('./dist/index');
+const { WebcastPushConnection } = require('./dist/index'); // From tiktok-live-connector
 const axios = require('axios');
-const express = express();
-
-const app = express();
+const express = require('express'); // ✅ Correct import
+const app = express();              // ✅ Create Express app
 
 // Configuration
-const tiktokUsername = 'jhonjalany'; // Replace with your TikTok username
+const tiktokUsername = 'jhonjalany'; // Replace with your username
 const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker'; 
 
 // In-memory storage for recent interactions
@@ -58,41 +57,10 @@ async function isUserLive(username) {
 
 let currentTiktokLive = null;
 
-// Attempt to connect only if user is live
-async function attemptReconnect() {
-    console.log("Checking if user is live...");
-    const live = await isUserLive(tiktokUsername);
-
-    if (!live) {
-        console.log("User is not live. Retrying in 60 seconds...");
-        return;
-    }
-
-    console.log("User is live. Creating new connection...");
-
-    // Clean up previous connection
-    if (currentTiktokLive) {
-        currentTiktokLive.removeAllListeners();
-        try {
-            await currentTiktokLive.disconnect(); // Graceful disconnect
-        } catch (e) {}
-    }
-
-    // Create a fresh connection
-    currentTiktokLive = new WebcastPushConnection(tiktokUsername);
-
-    // Re-attach event listeners
-    setupEventListeners(currentTiktokLive);
-
-    try {
-        await currentTiktokLive.connect();
-        console.log("Successfully connected to TikTok live room!");
-    } catch (err) {
-        console.error("Connection failed:", err.message);
-    }
-}
-
+// Function to setup event listeners
 function setupEventListeners(connection) {
+    connection.removeAllListeners(); // Prevent duplicates
+
     // Handle like events
     connection.on('like', (data) => {
         const userId = data.userId.toString();
@@ -132,19 +100,55 @@ function setupEventListeners(connection) {
         viewerStats[userId].coins += giftCoins;
     });
 
-    // Optional: handle disconnects
+    // Handle disconnects
     connection.on('disconnected', () => {
         console.log('Disconnected from live room.');
+        currentTiktokLive = null; // Reset so we can reconnect
     });
 
     connection.on('roomClose', () => {
         console.log('Live room closed.');
+        currentTiktokLive = null;
     });
+}
+
+// Attempt to connect only if user is live
+async function attemptReconnect() {
+    console.log("🔍 Checking if user is live...");
+
+    const live = await isUserLive(tiktokUsername);
+
+    if (!live) {
+        console.log("🔴 User is NOT live. Retrying in 60 seconds...");
+        return;
+    }
+
+    console.log("🟢 User is live. Creating new connection...");
+
+    // Clean up previous connection
+    if (currentTiktokLive) {
+        currentTiktokLive.removeAllListeners();
+        try {
+            await currentTiktokLive.disconnect();
+        } catch (e) {}
+    }
+
+    // Create fresh connection
+    currentTiktokLive = new WebcastPushConnection(tiktokUsername);
+    setupEventListeners(currentTiktokLive);
+
+    try {
+        await currentTiktokLive.connect();
+        console.log("✅ Successfully connected to TikTok live room!");
+    } catch (err) {
+        console.error("❌ Connection failed:", err.message);
+        currentTiktokLive = null;
+    }
 }
 
 // Polling interval to check for live status
 async function startPolling() {
-    console.log("Starting live status polling every 60 seconds...");
+    console.log("🔄 Starting live status polling every 60 seconds...");
 
     setInterval(async () => {
         await attemptReconnect();
@@ -154,10 +158,10 @@ async function startPolling() {
 // Express server to satisfy Render's requirement
 const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => {
-    res.send(`TikTok Live Tracker Running... Monitoring @${tiktokUsername}`);
+    res.send(`🎥 TikTok Live Tracker Running... Monitoring @${tiktokUsername}`);
 });
 
 app.listen(PORT, '0.0.0.0', async () => {
-    console.log(`Server is listening on port ${PORT}`);
+    console.log(`📡 Server is listening on port ${PORT}`);
     await startPolling(); // Start polling immediately
 });
