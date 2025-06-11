@@ -8,7 +8,7 @@ const app = express();
 const tiktokUsername = 'jhonjalany'; // Replace with your TikTok username
 const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker'; 
 
-const tiktokLive = new WebcastPushConnection(tiktokUsername);
+let tiktokLive = new WebcastPushConnection(tiktokUsername);
 
 // In-memory storage for recent interactions
 let viewerStats = {};
@@ -47,48 +47,61 @@ setInterval(async () => {
     viewerStats = {};
 }, 5000);
 
-// Reconnection logic
-let reconnectAttempts = 0;
-const maxReconnectAttempts = 10000;
-
-async function attemptReconnect() {
-    if (reconnectAttempts >= maxReconnectAttempts) {
-        console.log("Max reconnection attempts reached. Stopping.");
-        return;
-    }
-
-    reconnectAttempts++;
-    console.log(`Reconnection attempt #${reconnectAttempts}...`);
-
+// Check if user is live via HTTP request
+async function isUserLive(username) {
     try {
-        await tiktokLive.connect();
-        console.log("Successfully reconnected to TikTok live room!");
-        reconnectAttempts = 0; // Reset on success
+        const url = `https://www.tiktok.com/@${username}`; 
+        const response = await axios.get(url);
+        return response.data.includes('"isLive":true');
     } catch (err) {
-        console.error("Reconnection failed:", err.message);
-        setTimeout(attemptReconnect, 60000); // Try again in 5 minutes
+        return false;
     }
 }
 
+// Attempt to connect only if user is live
+async function attemptReconnect() {
+    console.log("Checking if user is live...");
+    const live = await isUserLive(tiktokUsername);
+
+    if (!live) {
+        console.log("User is not live. Retrying in 60 seconds...");
+        return;
+    }
+
+    console.log("User is live. Connecting...");
+
+    try {
+        await tiktokLive.connect();
+        console.log("Successfully connected to TikTok live room!");
+    } catch (err) {
+        console.error("Connection failed:", err.message);
+    }
+}
+
+// Polling interval to check for live status
+async function startPolling() {
+    console.log("Starting live status polling every 60 seconds...");
+
+    setInterval(async () => {
+        if (tiktokLive.state === "connected") return;
+
+        await attemptReconnect();
+    }, 60000); // Every 60 seconds
+}
+
 // Initial connection
-tiktokLive.connect()
-    .then(() => {
-        console.log('Connected to TikTok live room!');
-    })
-    .catch(() => {
-        console.log("User is not live yet or connection failed. Starting reconnection attempts...");
-        attemptReconnect();
-    });
+async function init() {
+    await attemptReconnect();
+    startPolling();
+}
 
 // Listen for disconnection events
 tiktokLive.on('disconnected', () => {
-    console.log('Disconnected from TikTok live room. Attempting to reconnect...');
-    attemptReconnect();
+    console.log('Disconnected from TikTok live room.');
 });
 
 tiktokLive.on('roomClose', () => {
-    console.log('TikTok live room was closed. Attempting to reconnect...');
-    attemptReconnect();
+    console.log('TikTok live room was closed.');
 });
 
 // Handle like events
@@ -133,9 +146,10 @@ tiktokLive.on('gift', (data) => {
 // Express server to satisfy Render's requirement
 const PORT = process.env.PORT || 10000;
 app.get('/', (req, res) => {
-    res.send('TikTok Live Tracker Running...');
+    res.send(`TikTok Live Tracker Running... Monitoring @${tiktokUsername}`);
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Server is listening on port ${PORT}`);
+    await init(); // Start the main logic
 });
