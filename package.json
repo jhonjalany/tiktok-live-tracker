@@ -54,7 +54,7 @@
         "callable-instance": "^2.0.0",
         "protobufjs": "^6.11.2",
         "typed-emitter": "^2.1.0",
-        "websocket": "^1.0.35"
+        "websocket": "^1.0.35",
         "tiktok-webcast-push-connection": "^1.0.19"
     },
     "devDependencies": {
