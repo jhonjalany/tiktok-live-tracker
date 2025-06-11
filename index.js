@@ -1,14 +1,12 @@
-const { WebcastPushConnection } = require('./dist/index'); // Adjust this path if needed
+const { WebcastPushConnection } = require('./dist/index');
 const axios = require('axios');
-const express = require('express');
+const express = express();
 
 const app = express();
 
 // Configuration
 const tiktokUsername = 'jhonjalany'; // Replace with your TikTok username
 const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker'; 
-
-let tiktokLive = new WebcastPushConnection(tiktokUsername);
 
 // In-memory storage for recent interactions
 let viewerStats = {};
@@ -58,6 +56,8 @@ async function isUserLive(username) {
     }
 }
 
+let currentTiktokLive = null;
+
 // Attempt to connect only if user is live
 async function attemptReconnect() {
     console.log("Checking if user is live...");
@@ -68,14 +68,78 @@ async function attemptReconnect() {
         return;
     }
 
-    console.log("User is live. Connecting...");
+    console.log("User is live. Creating new connection...");
+
+    // Clean up previous connection
+    if (currentTiktokLive) {
+        currentTiktokLive.removeAllListeners();
+        try {
+            await currentTiktokLive.disconnect(); // Graceful disconnect
+        } catch (e) {}
+    }
+
+    // Create a fresh connection
+    currentTiktokLive = new WebcastPushConnection(tiktokUsername);
+
+    // Re-attach event listeners
+    setupEventListeners(currentTiktokLive);
 
     try {
-        await tiktokLive.connect();
+        await currentTiktokLive.connect();
         console.log("Successfully connected to TikTok live room!");
     } catch (err) {
         console.error("Connection failed:", err.message);
     }
+}
+
+function setupEventListeners(connection) {
+    // Handle like events
+    connection.on('like', (data) => {
+        const userId = data.userId.toString();
+        const uniqueId = data.uniqueId;
+
+        if (!viewerStats[userId]) {
+            viewerStats[userId] = {
+                userID: userId,
+                username: uniqueId,
+                profileLink: getProfileLink(uniqueId),
+                profilePictureUrl: data.profilePictureUrl || '',
+                likes: 0,
+                coins: 0
+            };
+        }
+
+        viewerStats[userId].likes += data.likeCount;
+    });
+
+    // Handle gift events
+    connection.on('gift', (data) => {
+        const userId = data.userId.toString();
+        const uniqueId = data.uniqueId;
+
+        if (!viewerStats[userId]) {
+            viewerStats[userId] = {
+                userID: userId,
+                username: uniqueId,
+                profileLink: getProfileLink(uniqueId),
+                profilePictureUrl: data.profilePictureUrl || '',
+                likes: 0,
+                coins: 0
+            };
+        }
+
+        const giftCoins = data.diamondCount * (data.repeatCount || 1);
+        viewerStats[userId].coins += giftCoins;
+    });
+
+    // Optional: handle disconnects
+    connection.on('disconnected', () => {
+        console.log('Disconnected from live room.');
+    });
+
+    connection.on('roomClose', () => {
+        console.log('Live room closed.');
+    });
 }
 
 // Polling interval to check for live status
@@ -83,65 +147,9 @@ async function startPolling() {
     console.log("Starting live status polling every 60 seconds...");
 
     setInterval(async () => {
-        if (tiktokLive.state === "connected") return;
-
         await attemptReconnect();
     }, 60000); // Every 60 seconds
 }
-
-// Initial connection
-async function init() {
-    await attemptReconnect();
-    startPolling();
-}
-
-// Listen for disconnection events
-tiktokLive.on('disconnected', () => {
-    console.log('Disconnected from TikTok live room.');
-});
-
-tiktokLive.on('roomClose', () => {
-    console.log('TikTok live room was closed.');
-});
-
-// Handle like events
-tiktokLive.on('like', (data) => {
-    const userId = data.userId.toString();
-    const uniqueId = data.uniqueId;
-
-    if (!viewerStats[userId]) {
-        viewerStats[userId] = {
-            userID: userId,
-            username: uniqueId,
-            profileLink: getProfileLink(uniqueId),
-            profilePictureUrl: data.profilePictureUrl || '',
-            likes: 0,
-            coins: 0
-        };
-    }
-
-    viewerStats[userId].likes += data.likeCount;
-});
-
-// Handle gift events
-tiktokLive.on('gift', (data) => {
-    const userId = data.userId.toString();
-    const uniqueId = data.uniqueId;
-
-    if (!viewerStats[userId]) {
-        viewerStats[userId] = {
-            userID: userId,
-            username: uniqueId,
-            profileLink: getProfileLink(uniqueId),
-            profilePictureUrl: data.profilePictureUrl || '',
-            likes: 0,
-            coins: 0
-        };
-    }
-
-    const giftCoins = data.diamondCount * (data.repeatCount || 1);
-    viewerStats[userId].coins += giftCoins;
-});
 
 // Express server to satisfy Render's requirement
 const PORT = process.env.PORT || 10000;
@@ -151,5 +159,5 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, '0.0.0.0', async () => {
     console.log(`Server is listening on port ${PORT}`);
-    await init(); // Start the main logic
+    await startPolling(); // Start polling immediately
 });
