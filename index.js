@@ -59,12 +59,9 @@ async function checkIfUserIsLive(username) {
     try {
         const response = await axios.get(`https://www.tiktok.com/@${username}`); 
         const match = response.data.match(/roomId%22%3A%22(\d+)%22/);
-        if (match && match[1]) {
-            return match[1]; // Returns room ID if user is live
-        }
-        return null; // Not live
+        return match ? match[1] : null;
     } catch (err) {
-        console.error('Error checking live status:', err.message);
+        console.error("Error fetching live status:", err.message);
         return null;
     }
 }
@@ -78,11 +75,11 @@ async function pollForLiveStatus() {
 
         try {
             if (tiktokLive['_liveClient']?.connected) {
-                tiktokLive.disconnect(); // Disconnect old connection if any
+                tiktokLive.disconnect(); // Disconnect old connection
             }
 
-            tiktokLive = new WebcastPushConnection(tiktokUsername); // Create a fresh instance
-            setupEventListeners(); // Re-bind event listeners
+            tiktokLive = new WebcastPushConnection(tiktokUsername); // Fresh instance
+            setupEventListeners(); // Rebind event listeners
 
             await tiktokLive.connect();
             console.log("Successfully connected to new live room!");
@@ -104,7 +101,6 @@ setInterval(pollForLiveStatus, 30000); // Every 30 seconds
 
 function setupEventListeners() {
 
-    // Reconnection logic
     function attemptReconnect() {
         if (reconnectAttempts >= maxReconnectAttempts) {
             console.log("Max reconnection attempts reached. Stopping.");
@@ -133,7 +129,7 @@ function setupEventListeners() {
     });
 
     tiktokLive.on('roomClose', () => {
-        console.log('TikTok live room was closed. Attempting to reconnect...');
+        console.log('TikTok live room was closed. Resetting live status...');
         currentRoomId = null; // Reset so polling can detect new live
         attemptReconnect();
     });
