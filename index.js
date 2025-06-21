@@ -7,7 +7,8 @@ const app = express();
 // Configuration
 const tiktokUsername = 'ayannaquizon'; // Replace with your TikTok username
 const sheetWebAppUrl = 'https://script.google.com/macros/s/AKfycbzoN1pku4vRujwZ95y_V4M_oUrTZ6CycIrSbUV8JaJ8MLqnT-qQGW5D3PGcTnkivac/exec'; 
-const BATCH_INTERVAL_MS = 5000; // Send data every 5 seconds
+const BATCH_INTERVAL_MS = 5000; // Send every 5 seconds
+const OVERLAP_DELAY_MS = 50;    // Start next buffer 50ms before
 
 // Initialize connection
 const tiktokLive = new WebcastPushConnection(tiktokUsername);
@@ -32,9 +33,7 @@ function getCurrentBuffers() {
 }
 
 // Function to send data to Google Sheet
-async function sendDataToSheet() {
-    const { sendingBuffer, receivingBuffer } = getCurrentBuffers();
-
+async function sendDataToSheet(sendingBuffer) {
     try {
         const output = {};
         for (const [userId, data] of Object.entries(sendingBuffer)) {
@@ -67,9 +66,6 @@ async function sendDataToSheet() {
 
         retryCount = 0;
 
-        // Switch active buffer
-        activeBuffer = activeBuffer === 'A' ? 'B' : 'A';
-
     } catch (error) {
         console.error('Error sending data to Google Sheet:');
         if (error.response) {
@@ -84,7 +80,7 @@ async function sendDataToSheet() {
         if (retryCount < MAX_RETRIES) {
             retryCount++;
             console.log(`Retrying... (${retryCount}/${MAX_RETRIES})`);
-            setTimeout(sendDataToSheet, 5000);
+            setTimeout(() => sendDataToSheet(sendingBuffer), 5000);
         } else {
             console.error('Max retries reached. Data may be lost.');
 
@@ -96,20 +92,39 @@ async function sendDataToSheet() {
             }
 
             retryCount = 0;
-            activeBuffer = activeBuffer === 'A' ? 'B' : 'A';
         }
     }
 }
 
-// Start batch interval (every 5 seconds)
-setInterval(() => {
-    console.log(`${new Date().toLocaleTimeString()} - Batch interval complete. Sending data from buffer ${activeBuffer === 'A' ? 'B' : 'A'}...`);
-    sendDataToSheet();
-}, BATCH_INTERVAL_MS);
+// Schedule alternating batch intervals with overlap
+function startBufferSwitchLoop() {
+    setInterval(() => {
+        const { sendingBuffer } = getCurrentBuffers();
+
+        console.log(`${new Date().toLocaleTimeString()} - Sending data from buffer ${activeBuffer}`);
+        sendDataToSheet(sendingBuffer);
+
+        // Switch active buffer
+        activeBuffer = activeBuffer === 'A' ? 'B' : 'A';
+
+        // Start next buffer early (50ms before next interval)
+        setTimeout(() => {
+            console.log(`Buffer ${activeBuffer} now actively recording.`);
+        }, OVERLAP_DELAY_MS);
+    }, BATCH_INTERVAL_MS);
+}
 
 // Connect to TikTok Live room
 tiktokLive.connect().then(() => {
     console.log('Connected to TikTok live room!');
+    
+    // Start first buffer immediately
+    setTimeout(() => {
+        console.log('Buffer A now actively recording.');
+    }, OVERLAP_DELAY_MS);
+
+    // Start the loop
+    startBufferSwitchLoop();
 }).catch(err => {
     console.error('Connection failed:', err);
 });
@@ -133,7 +148,7 @@ tiktokLive.on('like', (data) => {
     }
 
     buffer[userId].likes += data.likeCount;
-    console.log(`Received likes: ${data.uniqueId} - ${data.likeCount} likes`);
+    console.log(`[Like] ${uniqueId} gave ${data.likeCount} likes | Current buffer: ${activeBuffer}`);
 });
 
 // Handle Gift events
@@ -157,7 +172,7 @@ tiktokLive.on('gift', (data) => {
     const giftCoins = data.diamondCount * (data.repeatCount || 1);
     buffer[userId].coins += giftCoins;
 
-    console.log(`Received gift: ${data.giftName} - ${giftCoins} coins`);
+    console.log(`[Gift] ${data.giftName} worth ${giftCoins} coins from ${uniqueId} | Current buffer: ${activeBuffer}`);
 });
 
 // Optional disconnect/reconnect listeners
