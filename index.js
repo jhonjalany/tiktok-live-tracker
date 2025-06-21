@@ -4,28 +4,34 @@ const express = require('express');
 
 const app = express();
 
-// TikTok streamer username (without @)
+// Configuration
 const tiktokUsername = 'daniellepau'; // Replace with your TikTok username
-
-// Google Apps Script Web App URL
 const sheetWebAppUrl = 'https://script.google.com/macros/s/AKfycbzoN1pku4vRujwZ95y_V4M_oUrTZ6CycIrSbUV8JaJ8MLqnT-qQGW5D3PGcTnkivac/exec'; 
+const TIP_THRESHOLD = 50;           // Define what's considered a "tip"
+const DEBOUNCE_DELAY_MS = 500;      // Normal delay before sending batched data
+const RAPID_GIFT_INTERVAL = 2000;   // Time window to detect rapid gifts from same user
 
-// Connect to TikTok Live
+// Initialize connection
 const tiktokLive = new WebcastPushConnection(tiktokUsername);
 
-// In-memory storage for current viewer stats
+// In-memory storage for viewer stats
 let viewerStats = {};
 
 // Utility to generate profile link
 const getProfileLink = (uniqueId) => `https://tiktok.com/@${uniqueId}`; 
 
-// Debounce delay: wait 2000ms (2 seconds) after last event before sending
-const DEBOUNCE_DELAY_MS = 2000;
+// Track recent gift timestamps per user
+const recentGifts = {}; // { userId: timestamp }
+
+// Retry logic
+let retryCount = 0;
+const MAX_RETRIES = 3;
+
+// Debounce timer
 let sendTimeout = null;
 
 // Function to send data to Google Sheet
 async function sendDataToSheet() {
-    // Create a copy to send and clear viewerStats immediately
     const output = {};
     for (const [userId, data] of Object.entries(viewerStats)) {
         output[userId] = {
@@ -38,8 +44,7 @@ async function sendDataToSheet() {
         };
     }
 
-    // Clear viewer stats before sending to avoid missing new events
-    viewerStats = {};
+    viewerStats = {}; // Clear immediately after copying
 
     if (Object.keys(output).length === 0) {
         console.log('No data to send.');
@@ -51,6 +56,7 @@ async function sendDataToSheet() {
     try {
         const response = await axios.post(sheetWebAppUrl, output);
         console.log('Data successfully sent to Google Sheet:', response.data.result);
+        retryCount = 0;
     } catch (error) {
         console.error('Error sending data to Google Sheet:');
         if (error.response) {
@@ -61,6 +67,15 @@ async function sendDataToSheet() {
         } else {
             console.error('Unexpected error:', error.message);
         }
+
+        if (retryCount < MAX_RETRIES) {
+            retryCount++;
+            console.log(`Retrying... (${retryCount}/${MAX_RETRIES})`);
+            setTimeout(sendDataToSheet, 5000);
+        } else {
+            console.error('Max retries reached. Data may be lost.');
+            retryCount = 0;
+        }
     }
 }
 
@@ -68,6 +83,19 @@ async function sendDataToSheet() {
 function scheduleSend() {
     if (sendTimeout) clearTimeout(sendTimeout);
     sendTimeout = setTimeout(sendDataToSheet, DEBOUNCE_DELAY_MS);
+}
+
+// Detect rapid repeated gifts from same user
+function isRapidGift(userId) {
+    const now = Date.now();
+    if (!recentGifts[userId]) {
+        recentGifts[userId] = now;
+        return false;
+    }
+
+    const rapid = now - recentGifts[userId] < RAPID_GIFT_INTERVAL;
+    recentGifts[userId] = now;
+    return rapid;
 }
 
 // Connect to TikTok Live room
@@ -94,8 +122,8 @@ tiktokLive.on('like', (data) => {
     }
 
     viewerStats[userId].likes += data.likeCount;
+    console.log(`Received likes: ${data.uniqueId} - ${data.likeCount} likes`);
 
-    // Schedule send (will reset timer if called again within 2 sec)
     scheduleSend();
 });
 
@@ -118,8 +146,17 @@ tiktokLive.on('gift', (data) => {
     const giftCoins = data.diamondCount * (data.repeatCount || 1);
     viewerStats[userId].coins += giftCoins;
 
-    // Schedule send
+    console.log(`Received gift: ${data.giftName} - ${giftCoins} coins`);
+
+    // Schedule normal debounced send
     scheduleSend();
+
+    // Send immediately if it's a tip or rapid gift
+    if (giftCoins >= TIP_THRESHOLD || isRapidGift(userId)) {
+        console.log(`Immediate send triggered for gift from ${uniqueId}`);
+        clearTimeout(sendTimeout);
+        sendDataToSheet();
+    }
 });
 
 // Express route to satisfy hosting platforms like Render
