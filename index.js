@@ -1,97 +1,83 @@
-const { WebcastPushConnection } = require('./dist/index'); // Adjust this path if needed
+const { WebcastPushConnection } = require('./dist/index');
 const axios = require('axios');
 const express = require('express');
 
 const app = express();
 
-// Configuration
-const tiktokUsername = 'jhonjalany'; // Replace with your TikTok username
-const n8nWebhookUrl = 'https://n8n-app-gn6h.onrender.com/webhook/livetracker'; 
+// TikTok streamer username (without @)
+const tiktokUsername = 'daniellepau'; // Replace with your TikTok username
 
+// Google Apps Script Web App URL
+const sheetWebAppUrl = 'https://script.google.com/macros/s/AKfycbzoN1pku4vRujwZ95y_V4M_oUrTZ6CycIrSbUV8JaJ8MLqnT-qQGW5D3PGcTnkivac/exec'; 
+
+// Connect to TikTok Live
 const tiktokLive = new WebcastPushConnection(tiktokUsername);
 
-// In-memory storage for recent interactions
+// In-memory storage for current viewer stats
 let viewerStats = {};
 
-// Utility to construct TikTok profile URL
-const getProfileLink = (uniqueId) => `https://www.tiktok.com/@${uniqueId}`; 
+// Utility to generate profile link
+const getProfileLink = (uniqueId) => `https://tiktok.com/@${uniqueId}`; 
 
-// Interval to print + clear every 5 seconds
-setInterval(async () => {
-    console.clear();
+// Debounce delay: wait 2000ms (2 seconds) after last event before sending
+const DEBOUNCE_DELAY_MS = 2000;
+let sendTimeout = null;
 
+// Function to send data to Google Sheet
+async function sendDataToSheet() {
+    // Create a copy to send and clear viewerStats immediately
     const output = {};
-
     for (const [userId, data] of Object.entries(viewerStats)) {
         output[userId] = {
             userID: userId,
             username: data.username,
             profileLink: data.profileLink,
-            profilePictureUrl: data.profilePictureUrl,
+            profilePictureUrl: data.profilePictureUrl || '',
             totalLikesCountInPast5Seconds: data.likes,
             totalCoinOrGiftCountInPast5Seconds: data.coins
         };
     }
 
-    console.log(JSON.stringify(output, null, 2));
-
-    // Send to n8n webhook
-    try {
-        const response = await axios.post(n8nWebhookUrl, output);
-        console.log('Data sent to n8n webhook:', response.status);
-    } catch (error) {
-        console.error('Failed to send data to n8n webhook:', error.message);
-    }
-
-    // Clear all user data after output
+    // Clear viewer stats before sending to avoid missing new events
     viewerStats = {};
-}, 5000);
 
-// Reconnection logic
-let reconnectAttempts = 0;
-const maxReconnectAttempts = 10;
-
-async function attemptReconnect() {
-    if (reconnectAttempts >= maxReconnectAttempts) {
-        console.log("Max reconnection attempts reached. Stopping.");
+    if (Object.keys(output).length === 0) {
+        console.log('No data to send.');
         return;
     }
 
-    reconnectAttempts++;
-    console.log(`Reconnection attempt #${reconnectAttempts}...`);
+    console.log('Sending viewer stats:', JSON.stringify(output, null, 2));
 
     try {
-        await tiktokLive.connect();
-        console.log("Successfully reconnected to TikTok live room!");
-        reconnectAttempts = 0; // Reset on success
-    } catch (err) {
-        console.error("Reconnection failed:", err.message);
-        setTimeout(attemptReconnect, 30000); // Try again in 5 minutes
+        const response = await axios.post(sheetWebAppUrl, output);
+        console.log('Data successfully sent to Google Sheet:', response.data.result);
+    } catch (error) {
+        console.error('Error sending data to Google Sheet:');
+        if (error.response) {
+            console.error('Status Code:', error.response.status);
+            console.error('Response:', error.response.data);
+        } else if (error.request) {
+            console.error('No response received:', error.message);
+        } else {
+            console.error('Unexpected error:', error.message);
+        }
     }
 }
 
-// Initial connection
-tiktokLive.connect()
-    .then(() => {
-        console.log('Connected to TikTok live room!');
-    })
-    .catch(() => {
-        console.log("User is not live yet or connection failed. Starting reconnection attempts...");
-        attemptReconnect();
-    });
+// Schedule sending data with debounce
+function scheduleSend() {
+    if (sendTimeout) clearTimeout(sendTimeout);
+    sendTimeout = setTimeout(sendDataToSheet, DEBOUNCE_DELAY_MS);
+}
 
-// Listen for disconnection events
-tiktokLive.on('disconnected', () => {
-    console.log('Disconnected from TikTok live room. Attempting to reconnect...');
-    attemptReconnect();
+// Connect to TikTok Live room
+tiktokLive.connect().then(() => {
+    console.log('Connected to TikTok live room!');
+}).catch(err => {
+    console.error('Connection failed:', err);
 });
 
-tiktokLive.on('roomClose', () => {
-    console.log('TikTok live room was closed. Attempting to reconnect...');
-    attemptReconnect();
-});
-
-// Handle like events
+// Handle Like events
 tiktokLive.on('like', (data) => {
     const userId = data.userId.toString();
     const uniqueId = data.uniqueId;
@@ -108,9 +94,12 @@ tiktokLive.on('like', (data) => {
     }
 
     viewerStats[userId].likes += data.likeCount;
+
+    // Schedule send (will reset timer if called again within 2 sec)
+    scheduleSend();
 });
 
-// Handle gift events
+// Handle Gift events
 tiktokLive.on('gift', (data) => {
     const userId = data.userId.toString();
     const uniqueId = data.uniqueId;
@@ -128,14 +117,18 @@ tiktokLive.on('gift', (data) => {
 
     const giftCoins = data.diamondCount * (data.repeatCount || 1);
     viewerStats[userId].coins += giftCoins;
+
+    // Schedule send
+    scheduleSend();
 });
 
-// Express server to satisfy Render's requirement
-const PORT = process.env.PORT || 10000;
+// Express route to satisfy hosting platforms like Render
 app.get('/', (req, res) => {
     res.send('TikTok Live Tracker Running...');
 });
 
+// Start Express server
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is listening on port ${PORT}`);
 });
