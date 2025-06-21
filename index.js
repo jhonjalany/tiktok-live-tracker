@@ -5,7 +5,7 @@ const express = require('express');
 const app = express();
 
 // Configuration
-const tiktokUsername = 'daniellepau'; // Replace with your TikTok username
+const tiktokUsername = 'ayannaquizon'; // Replace with your TikTok username
 const sheetWebAppUrl = 'https://script.google.com/macros/s/AKfycbzoN1pku4vRujwZ95y_V4M_oUrTZ6CycIrSbUV8JaJ8MLqnT-qQGW5D3PGcTnkivac/exec'; 
 const BATCH_INTERVAL_MS = 5000; // Send data every 5 seconds
 
