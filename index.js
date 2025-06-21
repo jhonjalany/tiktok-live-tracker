@@ -12,8 +12,10 @@ const BATCH_INTERVAL_MS = 5000; // Send data every 5 seconds
 // Initialize connection
 const tiktokLive = new WebcastPushConnection(tiktokUsername);
 
-// In-memory storage for viewer stats
-let viewerStats = {};
+// Double buffering: two viewer stats stores
+let viewerStatsA = {};
+let viewerStatsB = {};
+let activeBuffer = 'A'; // Start with buffer A
 
 // Utility to generate profile link
 const getProfileLink = (uniqueId) => `https://tiktok.com/@${uniqueId}`; 
@@ -22,34 +24,51 @@ const getProfileLink = (uniqueId) => `https://tiktok.com/@${uniqueId}`;
 let retryCount = 0;
 const MAX_RETRIES = 3;
 
+// Function to determine current and sending buffer
+function getCurrentBuffers() {
+    return activeBuffer === 'A'
+        ? { sendingBuffer: viewerStatsA, receivingBuffer: viewerStatsB }
+        : { sendingBuffer: viewerStatsB, receivingBuffer: viewerStatsA };
+}
+
 // Function to send data to Google Sheet
 async function sendDataToSheet() {
-    const output = {};
-    for (const [userId, data] of Object.entries(viewerStats)) {
-        output[userId] = {
-            userID: userId,
-            username: data.username,
-            profileLink: data.profileLink,
-            profilePictureUrl: data.profilePictureUrl || '',
-            totalLikesCountInPast5Seconds: data.likes,
-            totalCoinOrGiftCountInPast5Seconds: data.coins
-        };
-    }
-
-    if (Object.keys(output).length === 0) {
-        console.log('No data to send.');
-        return;
-    }
-
-    console.log('Sending viewer stats:', JSON.stringify(output, null, 2));
+    const { sendingBuffer, receivingBuffer } = getCurrentBuffers();
 
     try {
+        const output = {};
+        for (const [userId, data] of Object.entries(sendingBuffer)) {
+            output[userId] = {
+                userID: userId,
+                username: data.username,
+                profileLink: data.profileLink,
+                profilePictureUrl: data.profilePictureUrl || '',
+                totalLikesCountInPast5Seconds: data.likes,
+                totalCoinOrGiftCountInPast5Seconds: data.coins
+            };
+        }
+
+        if (Object.keys(output).length === 0) {
+            console.log('No data to send in current buffer.');
+            return;
+        }
+
+        console.log('Sending viewer stats:', JSON.stringify(output, null, 2));
+
         const response = await axios.post(sheetWebAppUrl, output);
         console.log('Data successfully sent to Google Sheet:', response.data.result);
 
-        // ✅ Clear storage only after successful send
-        viewerStats = {}; // <-- This clears all stored viewer data
+        // Clear only the sending buffer
+        if (activeBuffer === 'A') {
+            viewerStatsA = {};
+        } else {
+            viewerStatsB = {};
+        }
+
         retryCount = 0;
+
+        // Switch active buffer
+        activeBuffer = activeBuffer === 'A' ? 'B' : 'A';
 
     } catch (error) {
         console.error('Error sending data to Google Sheet:');
@@ -69,26 +88,24 @@ async function sendDataToSheet() {
         } else {
             console.error('Max retries reached. Data may be lost.');
 
-            // ✅ Clear anyway to avoid duplicate sends on next success
-            viewerStats = {};
+            // Clear anyway to avoid duplicate sends on next success
+            if (activeBuffer === 'A') {
+                viewerStatsA = {};
+            } else {
+                viewerStatsB = {};
+            }
+
             retryCount = 0;
+            activeBuffer = activeBuffer === 'A' ? 'B' : 'A';
         }
     }
 }
 
 // Start batch interval (every 5 seconds)
 setInterval(() => {
-    console.log('5-second interval complete. Sending batch...');
+    console.log(`${new Date().toLocaleTimeString()} - Batch interval complete. Sending data from buffer ${activeBuffer === 'A' ? 'B' : 'A'}...`);
     sendDataToSheet();
 }, BATCH_INTERVAL_MS);
-
-// Optional global fallback (in case sendDataToSheet fails)
-setInterval(() => {
-    if (Object.keys(viewerStats).length > 0) {
-        console.log('Global fallback: Forcing send of pending data...');
-        sendDataToSheet();
-    }
-}, 10000); // Every 10 seconds
 
 // Connect to TikTok Live room
 tiktokLive.connect().then(() => {
@@ -102,8 +119,10 @@ tiktokLive.on('like', (data) => {
     const userId = data.userId.toString();
     const uniqueId = data.uniqueId;
 
-    if (!viewerStats[userId]) {
-        viewerStats[userId] = {
+    const buffer = activeBuffer === 'A' ? viewerStatsA : viewerStatsB;
+
+    if (!buffer[userId]) {
+        buffer[userId] = {
             userID: userId,
             username: uniqueId,
             profileLink: getProfileLink(uniqueId),
@@ -113,7 +132,7 @@ tiktokLive.on('like', (data) => {
         };
     }
 
-    viewerStats[userId].likes += data.likeCount;
+    buffer[userId].likes += data.likeCount;
     console.log(`Received likes: ${data.uniqueId} - ${data.likeCount} likes`);
 });
 
@@ -122,8 +141,10 @@ tiktokLive.on('gift', (data) => {
     const userId = data.userId.toString();
     const uniqueId = data.uniqueId;
 
-    if (!viewerStats[userId]) {
-        viewerStats[userId] = {
+    const buffer = activeBuffer === 'A' ? viewerStatsA : viewerStatsB;
+
+    if (!buffer[userId]) {
+        buffer[userId] = {
             userID: userId,
             username: uniqueId,
             profileLink: getProfileLink(uniqueId),
@@ -134,9 +155,20 @@ tiktokLive.on('gift', (data) => {
     }
 
     const giftCoins = data.diamondCount * (data.repeatCount || 1);
-    viewerStats[userId].coins += giftCoins;
+    buffer[userId].coins += giftCoins;
 
     console.log(`Received gift: ${data.giftName} - ${giftCoins} coins`);
+});
+
+// Optional disconnect/reconnect listeners
+tiktokLive.on('disconnected', () => {
+    console.log('Disconnected from TikTok live room.');
+});
+tiktokLive.on('reconnecting', () => {
+    console.log('Reconnecting to TikTok live room...');
+});
+tiktokLive.on('roomUser', (user) => {
+    console.log(`Viewer joined: ${user.uniqueId}`);
 });
 
 // Express route to satisfy hosting platforms like Render
