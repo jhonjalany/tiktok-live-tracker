@@ -8,7 +8,7 @@ const app = express();
 const tiktokUsername = 'daniellepau'; // Replace with your TikTok username
 const sheetWebAppUrl = 'https://script.google.com/macros/s/AKfycbzoN1pku4vRujwZ95y_V4M_oUrTZ6CycIrSbUV8JaJ8MLqnT-qQGW5D3PGcTnkivac/exec'; 
 const TIP_THRESHOLD = 50;           // Define what's considered a "tip"
-const DEBOUNCE_DELAY_MS = 500;      // Normal delay before sending batched data
+const DEBOUNCE_DELAY_MS = 1500;      // Normal delay before sending batched data
 const RAPID_GIFT_INTERVAL = 2000;   // Time window to detect rapid gifts from same user
 
 // Initialize connection
