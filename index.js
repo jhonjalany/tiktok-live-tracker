@@ -7,14 +7,13 @@ const app = express();
 // Configuration
 const tiktokUsername = 'daniellepau'; // Replace with your TikTok username
 const sheetWebAppUrl = 'https://script.google.com/macros/s/AKfycbzoN1pku4vRujwZ95y_V4M_oUrTZ6CycIrSbUV8JaJ8MLqnT-qQGW5D3PGcTnkivac/exec'; 
-const USER_DEBOUNCE_MS = 3000;      // Wait time per user after last event
-const GLOBAL_SEND_INTERVAL = 3000; // Fallback send all pending users every X ms
+const BATCH_INTERVAL_MS = 5000; // Send data every 5 seconds
 
 // Initialize connection
 const tiktokLive = new WebcastPushConnection(tiktokUsername);
 
-// In-memory storage for viewer stats + timers
-let viewerStats = {}; // { userId: { ...stats, timer } }
+// In-memory storage for viewer stats
+let viewerStats = {};
 
 // Utility to generate profile link
 const getProfileLink = (uniqueId) => `https://tiktok.com/@${uniqueId}`; 
@@ -24,9 +23,9 @@ let retryCount = 0;
 const MAX_RETRIES = 3;
 
 // Function to send data to Google Sheet
-async function sendDataToSheet(dataToSend) {
+async function sendDataToSheet() {
     const output = {};
-    for (const [userId, data] of Object.entries(dataToSend)) {
+    for (const [userId, data] of Object.entries(viewerStats)) {
         output[userId] = {
             userID: userId,
             username: data.username,
@@ -37,12 +36,21 @@ async function sendDataToSheet(dataToSend) {
         };
     }
 
+    if (Object.keys(output).length === 0) {
+        console.log('No data to send.');
+        return;
+    }
+
     console.log('Sending viewer stats:', JSON.stringify(output, null, 2));
 
     try {
         const response = await axios.post(sheetWebAppUrl, output);
         console.log('Data successfully sent to Google Sheet:', response.data.result);
+
+        // ✅ Clear storage only after successful send
+        viewerStats = {}; // <-- This clears all stored viewer data
         retryCount = 0;
+
     } catch (error) {
         console.error('Error sending data to Google Sheet:');
         if (error.response) {
@@ -57,49 +65,30 @@ async function sendDataToSheet(dataToSend) {
         if (retryCount < MAX_RETRIES) {
             retryCount++;
             console.log(`Retrying... (${retryCount}/${MAX_RETRIES})`);
-            setTimeout(() => sendDataToSheet(dataToSend), 5000);
+            setTimeout(sendDataToSheet, 5000);
         } else {
             console.error('Max retries reached. Data may be lost.');
+
+            // ✅ Clear anyway to avoid duplicate sends on next success
+            viewerStats = {};
             retryCount = 0;
         }
     }
 }
 
-// Clear user from stats and cancel timer
-function clearUser(userId) {
-    if (viewerStats[userId]?.timer) {
-        clearTimeout(viewerStats[userId].timer);
-    }
-    delete viewerStats[userId];
-}
-
-// Schedule sending for a specific user
-function scheduleUserSend(userId) {
-    if (viewerStats[userId]?.timer) {
-        clearTimeout(viewerStats[userId].timer);
-    }
-
-    viewerStats[userId].timer = setTimeout(() => {
-        const userData = { [userId]: viewerStats[userId] };
-        sendDataToSheet(userData);
-        clearUser(userId);
-    }, USER_DEBOUNCE_MS);
-}
-
-// Fallback interval to send any remaining data
+// Start batch interval (every 5 seconds)
 setInterval(() => {
-    const pendingUsers = {};
+    console.log('5-second interval complete. Sending batch...');
+    sendDataToSheet();
+}, BATCH_INTERVAL_MS);
 
-    for (const userId of Object.keys(viewerStats)) {
-        pendingUsers[userId] = viewerStats[userId];
-        clearUser(userId);
+// Optional global fallback (in case sendDataToSheet fails)
+setInterval(() => {
+    if (Object.keys(viewerStats).length > 0) {
+        console.log('Global fallback: Forcing send of pending data...');
+        sendDataToSheet();
     }
-
-    if (Object.keys(pendingUsers).length > 0) {
-        console.log('Global fallback: Sending batch of pending users...');
-        sendDataToSheet(pendingUsers);
-    }
-}, GLOBAL_SEND_INTERVAL);
+}, 10000); // Every 10 seconds
 
 // Connect to TikTok Live room
 tiktokLive.connect().then(() => {
@@ -120,15 +109,12 @@ tiktokLive.on('like', (data) => {
             profileLink: getProfileLink(uniqueId),
             profilePictureUrl: data.profilePictureUrl || '',
             likes: 0,
-            coins: 0,
-            timer: null
+            coins: 0
         };
     }
 
     viewerStats[userId].likes += data.likeCount;
     console.log(`Received likes: ${data.uniqueId} - ${data.likeCount} likes`);
-
-    scheduleUserSend(userId);
 });
 
 // Handle Gift events
@@ -143,8 +129,7 @@ tiktokLive.on('gift', (data) => {
             profileLink: getProfileLink(uniqueId),
             profilePictureUrl: data.profilePictureUrl || '',
             likes: 0,
-            coins: 0,
-            timer: null
+            coins: 0
         };
     }
 
@@ -152,8 +137,6 @@ tiktokLive.on('gift', (data) => {
     viewerStats[userId].coins += giftCoins;
 
     console.log(`Received gift: ${data.giftName} - ${giftCoins} coins`);
-
-    scheduleUserSend(userId);
 });
 
 // Express route to satisfy hosting platforms like Render
