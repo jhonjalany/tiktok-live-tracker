@@ -5,35 +5,28 @@ const express = require('express');
 const app = express();
 
 // Configuration
-const tiktokUsername = 'daniellepau'; // Replace with your TikTok username
+const tiktokUsername = 'cloudsss22'; // Replace with your TikTok username
 const sheetWebAppUrl = 'https://script.google.com/macros/s/AKfycbzoN1pku4vRujwZ95y_V4M_oUrTZ6CycIrSbUV8JaJ8MLqnT-qQGW5D3PGcTnkivac/exec'; 
-const TIP_THRESHOLD = 50;           // Define what's considered a "tip"
-const DEBOUNCE_DELAY_MS = 1500;      // Normal delay before sending batched data
-const RAPID_GIFT_INTERVAL = 2000;   // Time window to detect rapid gifts from same user
+const USER_DEBOUNCE_MS = 3000;      // Wait time per user after last event
+const GLOBAL_SEND_INTERVAL = 10000; // Fallback send all pending users every X ms
 
 // Initialize connection
 const tiktokLive = new WebcastPushConnection(tiktokUsername);
 
-// In-memory storage for viewer stats
-let viewerStats = {};
+// In-memory storage for viewer stats + timers
+let viewerStats = {}; // { userId: { ...stats, timer } }
 
 // Utility to generate profile link
 const getProfileLink = (uniqueId) => `https://tiktok.com/@${uniqueId}`; 
-
-// Track recent gift timestamps per user
-const recentGifts = {}; // { userId: timestamp }
 
 // Retry logic
 let retryCount = 0;
 const MAX_RETRIES = 3;
 
-// Debounce timer
-let sendTimeout = null;
-
 // Function to send data to Google Sheet
-async function sendDataToSheet() {
+async function sendDataToSheet(dataToSend) {
     const output = {};
-    for (const [userId, data] of Object.entries(viewerStats)) {
+    for (const [userId, data] of Object.entries(dataToSend)) {
         output[userId] = {
             userID: userId,
             username: data.username,
@@ -42,13 +35,6 @@ async function sendDataToSheet() {
             totalLikesCountInPast5Seconds: data.likes,
             totalCoinOrGiftCountInPast5Seconds: data.coins
         };
-    }
-
-    viewerStats = {}; // Clear immediately after copying
-
-    if (Object.keys(output).length === 0) {
-        console.log('No data to send.');
-        return;
     }
 
     console.log('Sending viewer stats:', JSON.stringify(output, null, 2));
@@ -71,7 +57,7 @@ async function sendDataToSheet() {
         if (retryCount < MAX_RETRIES) {
             retryCount++;
             console.log(`Retrying... (${retryCount}/${MAX_RETRIES})`);
-            setTimeout(sendDataToSheet, 5000);
+            setTimeout(() => sendDataToSheet(dataToSend), 5000);
         } else {
             console.error('Max retries reached. Data may be lost.');
             retryCount = 0;
@@ -79,24 +65,41 @@ async function sendDataToSheet() {
     }
 }
 
-// Schedule sending data with debounce
-function scheduleSend() {
-    if (sendTimeout) clearTimeout(sendTimeout);
-    sendTimeout = setTimeout(sendDataToSheet, DEBOUNCE_DELAY_MS);
+// Clear user from stats and cancel timer
+function clearUser(userId) {
+    if (viewerStats[userId]?.timer) {
+        clearTimeout(viewerStats[userId].timer);
+    }
+    delete viewerStats[userId];
 }
 
-// Detect rapid repeated gifts from same user
-function isRapidGift(userId) {
-    const now = Date.now();
-    if (!recentGifts[userId]) {
-        recentGifts[userId] = now;
-        return false;
+// Schedule sending for a specific user
+function scheduleUserSend(userId) {
+    if (viewerStats[userId]?.timer) {
+        clearTimeout(viewerStats[userId].timer);
     }
 
-    const rapid = now - recentGifts[userId] < RAPID_GIFT_INTERVAL;
-    recentGifts[userId] = now;
-    return rapid;
+    viewerStats[userId].timer = setTimeout(() => {
+        const userData = { [userId]: viewerStats[userId] };
+        sendDataToSheet(userData);
+        clearUser(userId);
+    }, USER_DEBOUNCE_MS);
 }
+
+// Fallback interval to send any remaining data
+setInterval(() => {
+    const pendingUsers = {};
+
+    for (const userId of Object.keys(viewerStats)) {
+        pendingUsers[userId] = viewerStats[userId];
+        clearUser(userId);
+    }
+
+    if (Object.keys(pendingUsers).length > 0) {
+        console.log('Global fallback: Sending batch of pending users...');
+        sendDataToSheet(pendingUsers);
+    }
+}, GLOBAL_SEND_INTERVAL);
 
 // Connect to TikTok Live room
 tiktokLive.connect().then(() => {
@@ -117,14 +120,15 @@ tiktokLive.on('like', (data) => {
             profileLink: getProfileLink(uniqueId),
             profilePictureUrl: data.profilePictureUrl || '',
             likes: 0,
-            coins: 0
+            coins: 0,
+            timer: null
         };
     }
 
     viewerStats[userId].likes += data.likeCount;
     console.log(`Received likes: ${data.uniqueId} - ${data.likeCount} likes`);
 
-    scheduleSend();
+    scheduleUserSend(userId);
 });
 
 // Handle Gift events
@@ -139,7 +143,8 @@ tiktokLive.on('gift', (data) => {
             profileLink: getProfileLink(uniqueId),
             profilePictureUrl: data.profilePictureUrl || '',
             likes: 0,
-            coins: 0
+            coins: 0,
+            timer: null
         };
     }
 
@@ -148,15 +153,7 @@ tiktokLive.on('gift', (data) => {
 
     console.log(`Received gift: ${data.giftName} - ${giftCoins} coins`);
 
-    // Schedule normal debounced send
-    scheduleSend();
-
-    // Send immediately if it's a tip or rapid gift
-    if (giftCoins >= TIP_THRESHOLD || isRapidGift(userId)) {
-        console.log(`Immediate send triggered for gift from ${uniqueId}`);
-        clearTimeout(sendTimeout);
-        sendDataToSheet();
-    }
+    scheduleUserSend(userId);
 });
 
 // Express route to satisfy hosting platforms like Render
