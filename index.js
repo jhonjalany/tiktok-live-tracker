@@ -5,7 +5,7 @@ const express = require('express');
 const app = express();
 
 // Configuration
-const tiktokUsername = 'cloudsss22'; // Replace with your TikTok username
+const tiktokUsername = 'daniellepau'; // Replace with your TikTok username
 const sheetWebAppUrl = 'https://script.google.com/macros/s/AKfycbzoN1pku4vRujwZ95y_V4M_oUrTZ6CycIrSbUV8JaJ8MLqnT-qQGW5D3PGcTnkivac/exec'; 
 const USER_DEBOUNCE_MS = 3000;      // Wait time per user after last event
 const GLOBAL_SEND_INTERVAL = 10000; // Fallback send all pending users every X ms
